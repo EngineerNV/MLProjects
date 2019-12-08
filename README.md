@@ -1,5 +1,10 @@
 # MLProjects
-Going to test different ML techniques, and test various frameworks 
+Goal: test different ML techniques, and test various frameworks 
 
-To-DO: Use SVM, NN, CNN, NLP 
-TO-DO: Framework Tensorflow, CUDA API 
+Applications in folder 
+
+Creadit Card Fraud Detection with Customized Neural Net made from custom Class files no Frameworks
+
+Raccoon Detection for security cameras - Using Keras framework and YOLO CNN
+
+
