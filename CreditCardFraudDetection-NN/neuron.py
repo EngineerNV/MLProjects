@@ -1,4 +1,4 @@
-print("I'm a nice guy")
+
 import random
 class neuron:
 	# this class is used as a data sctructure to hold attributes
