@@ -1,5 +1,9 @@
 # Raccoon Classification 
 
+Project idea and Template code inspired and contributed by https://github.com/experiencor/keras-yolo2
+
+
+
 Requirements
 
 Python 3
