@@ -3,8 +3,7 @@ from neuron import neuron as Neuron
 import numpy as np
 import math as m
 import sys
-print ("Parakeets can't vape, they will die.")
-#created by Nick Vaughn and Vaping Zack
+#created by Nick Vaughn and Zack A.
 #this class was made to be run with the main included at the bottom of the file after the class. 
 #It uses the neuron.py file to store information about neurons inside of the list objects for the input layer and hidden layer
 #this is a 1 input layer and 1 hidden layer implementation that gives out a single output for results 
