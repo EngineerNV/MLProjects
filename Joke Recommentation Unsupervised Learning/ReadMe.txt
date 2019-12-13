@@ -1,6 +1,6 @@
 READ ME, if you can
 
-Created by Nick The Powerful and Zack the Shaq 
+Created by Nick Vaughn and Zack Abuelhaj
 
 This program was made to use a recommendation system, and show how accurate perdictions can be over
 certain amounts of iterations. 
