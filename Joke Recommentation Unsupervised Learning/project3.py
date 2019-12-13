@@ -91,7 +91,7 @@ def prediction (X, theta, data):
 # python filename learnrate lamb numFeat iterations
 def main ():
 	# Set default values here:
-	# conditions for arguments, EITHER GIVE THEM ALL or WE SET THEM!!!! WAKONDA!!! 
+	# conditions for arguments
 	if len(sys.argv)<6:
 		filename = "testj.csv"
 		learnRate = 0.005
@@ -131,7 +131,7 @@ def main ():
 	prediction(X, theta, data)
 	# print(data)
 
-	# Plot the data for Dr. Hayes, because she's a cool person who probably owns an English budgie or two:
+	# Plot the data:
 	plt.plot(error)
 	plt.title("ERROR: English Budgies cannot vape!"); plt.ylabel('Computed Error'); plt.xlabel('Iterations')
 	plt.show()
