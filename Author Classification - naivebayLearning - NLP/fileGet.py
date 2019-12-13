@@ -1,4 +1,4 @@
-#created by Ice Master Nick Dizzy Dawg 
+#created by Nick Vaughn
 # was made for reading in files and creating a test and training sets
 #file must be in the same directory
 # we are returning a list of paths 
