@@ -1,9 +1,17 @@
 import argparse
 import os
 import numpy as np
-from keras.layers import Conv2D, Input, BatchNormalization, LeakyReLU, ZeroPadding2D, UpSampling2D
-from keras.layers.merge import add, concatenate
-from keras.models import Model
+from tensorflow.keras.layers import (
+    Conv2D,
+    Input,
+    BatchNormalization,
+    LeakyReLU,
+    ZeroPadding2D,
+    UpSampling2D,
+    add,
+    concatenate,
+)
+from tensorflow.keras.models import Model
 import struct
 import cv2
 
