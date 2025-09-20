@@ -1,16 +1,26 @@
-from keras.models import Model
-from keras.layers import Reshape, Activation, Conv2D, Input, MaxPooling2D, BatchNormalization, Flatten, Dense, Lambda
-from keras.layers.advanced_activations import LeakyReLU
 import tensorflow as tf
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import (
+    Reshape,
+    Activation,
+    Conv2D,
+    Input,
+    MaxPooling2D,
+    BatchNormalization,
+    Flatten,
+    Dense,
+    Lambda,
+    LeakyReLU,
+    concatenate,
+)
 import numpy as np
 import os
 import cv2
 from utils import decode_netout, compute_overlap, compute_ap
-from keras.applications.mobilenet import MobileNet
-from keras.layers.merge import concatenate
-from keras.optimizers import SGD, Adam, RMSprop
+from tensorflow.keras.applications import MobileNet
+from tensorflow.keras.optimizers import SGD, Adam, RMSprop
 from preprocessing import BatchGenerator
-from keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
 from backend import TinyYoloFeature, FullYoloFeature, MobileNetFeature, SqueezeNetFeature, Inception3Feature, VGG16Feature, ResNet50Feature
 
 class YOLO(object):
@@ -29,6 +39,9 @@ class YOLO(object):
         self.anchors  = anchors
 
         self.max_box_per_image = max_box_per_image
+
+        self.seen = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        self.total_recall = tf.Variable(0.0, dtype=tf.float32, trainable=False)
 
         ##########################
         # Make the model
@@ -85,19 +98,22 @@ class YOLO(object):
 
     def custom_loss(self, y_true, y_pred):
         mask_shape = tf.shape(y_true)[:4]
-        
-        cell_x = tf.to_float(tf.reshape(tf.tile(tf.range(self.grid_w), [self.grid_h]), (1, self.grid_h, self.grid_w, 1, 1)))
+
+        cell_x = tf.cast(
+            tf.reshape(
+                tf.tile(tf.range(self.grid_w), [self.grid_h]),
+                (1, self.grid_h, self.grid_w, 1, 1),
+            ),
+            tf.float32,
+        )
         cell_y = tf.transpose(cell_x, (0,2,1,3,4))
 
         cell_grid = tf.tile(tf.concat([cell_x,cell_y], -1), [self.batch_size, 1, 1, self.nb_box, 1])
-        
-        coord_mask = tf.zeros(mask_shape)
-        conf_mask  = tf.zeros(mask_shape)
-        class_mask = tf.zeros(mask_shape)
-        
-        seen = tf.Variable(0.)
-        total_recall = tf.Variable(0.)
-        
+
+        coord_mask = tf.zeros(mask_shape, dtype=tf.float32)
+        conf_mask  = tf.zeros(mask_shape, dtype=tf.float32)
+        class_mask = tf.zeros(mask_shape, dtype=tf.float32)
+
         """
         Adjust prediction
         """
@@ -140,10 +156,10 @@ class YOLO(object):
         pred_areas = pred_box_wh[..., 0] * pred_box_wh[..., 1]
 
         union_areas = pred_areas + true_areas - intersect_areas
-        iou_scores  = tf.truediv(intersect_areas, union_areas)
-        
+        iou_scores  = tf.math.truediv(intersect_areas, union_areas)
+
         true_box_conf = iou_scores * y_true[..., 4]
-        
+
         ### adjust class probabilities
         true_box_class = tf.argmax(y_true[..., 5:], -1)
         
@@ -178,65 +194,68 @@ class YOLO(object):
         pred_areas = pred_wh[..., 0] * pred_wh[..., 1]
 
         union_areas = pred_areas + true_areas - intersect_areas
-        iou_scores  = tf.truediv(intersect_areas, union_areas)
+        iou_scores  = tf.math.truediv(intersect_areas, union_areas)
 
         best_ious = tf.reduce_max(iou_scores, axis=4)
-        conf_mask = conf_mask + tf.to_float(best_ious < 0.6) * (1 - y_true[..., 4]) * self.no_object_scale
-        
+        conf_mask = conf_mask + tf.cast(best_ious < 0.6, tf.float32) * (1 - y_true[..., 4]) * self.no_object_scale
+
         # penalize the confidence of the boxes, which are reponsible for corresponding ground truth box
         conf_mask = conf_mask + y_true[..., 4] * self.object_scale
-        
+
         ### class mask: simply the position of the ground truth boxes (the predictors)
-        class_mask = y_true[..., 4] * tf.gather(self.class_wt, true_box_class) * self.class_scale       
-        
+        class_mask = y_true[..., 4] * tf.gather(self.class_wt, true_box_class) * self.class_scale
+
         """
         Warm-up training
         """
-        no_boxes_mask = tf.to_float(coord_mask < self.coord_scale/2.)
-        seen = tf.assign_add(seen, 1.)
-        
-        true_box_xy, true_box_wh, coord_mask = tf.cond(tf.less(seen, self.warmup_batches+1), 
-                              lambda: [true_box_xy + (0.5 + cell_grid) * no_boxes_mask, 
+        no_boxes_mask = tf.cast(coord_mask < self.coord_scale/2., tf.float32)
+        seen = self.seen.assign_add(1.0)
+
+        true_box_xy, true_box_wh, coord_mask = tf.cond(tf.less(seen, self.warmup_batches+1),
+                              lambda: [true_box_xy + (0.5 + cell_grid) * no_boxes_mask,
                                        true_box_wh + tf.ones_like(true_box_wh) * \
                                        np.reshape(self.anchors, [1,1,1,self.nb_box,2]) * \
-                                       no_boxes_mask, 
+                                       no_boxes_mask,
                                        tf.ones_like(coord_mask)],
-                              lambda: [true_box_xy, 
+                              lambda: [true_box_xy,
                                        true_box_wh,
                                        coord_mask])
-        
+
         """
         Finalize the loss
         """
-        nb_coord_box = tf.reduce_sum(tf.to_float(coord_mask > 0.0))
-        nb_conf_box  = tf.reduce_sum(tf.to_float(conf_mask  > 0.0))
-        nb_class_box = tf.reduce_sum(tf.to_float(class_mask > 0.0))
-        
+        nb_coord_box = tf.reduce_sum(tf.cast(coord_mask > 0.0, tf.float32))
+        nb_conf_box  = tf.reduce_sum(tf.cast(conf_mask  > 0.0, tf.float32))
+        nb_class_box = tf.reduce_sum(tf.cast(class_mask > 0.0, tf.float32))
+
         loss_xy    = tf.reduce_sum(tf.square(true_box_xy-pred_box_xy)     * coord_mask) / (nb_coord_box + 1e-6) / 2.
         loss_wh    = tf.reduce_sum(tf.square(true_box_wh-pred_box_wh)     * coord_mask) / (nb_coord_box + 1e-6) / 2.
         loss_conf  = tf.reduce_sum(tf.square(true_box_conf-pred_box_conf) * conf_mask)  / (nb_conf_box  + 1e-6) / 2.
         loss_class = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=true_box_class, logits=pred_box_class)
         loss_class = tf.reduce_sum(loss_class * class_mask) / (nb_class_box + 1e-6)
-        
-        loss = tf.cond(tf.less(seen, self.warmup_batches+1), 
+
+        loss = tf.cond(tf.less(seen, self.warmup_batches+1),
                       lambda: loss_xy + loss_wh + loss_conf + loss_class + 10,
                       lambda: loss_xy + loss_wh + loss_conf + loss_class)
-        
+
         if self.debug:
             nb_true_box = tf.reduce_sum(y_true[..., 4])
-            nb_pred_box = tf.reduce_sum(tf.to_float(true_box_conf > 0.5) * tf.to_float(pred_box_conf > 0.3))
-            
-            current_recall = nb_pred_box/(nb_true_box + 1e-6)
-            total_recall = tf.assign_add(total_recall, current_recall) 
+            nb_pred_box = tf.reduce_sum(
+                tf.cast(true_box_conf > 0.5, tf.float32)
+                * tf.cast(pred_box_conf > 0.3, tf.float32)
+            )
 
-            loss = tf.Print(loss, [loss_xy], message='Loss XY \t', summarize=1000)
-            loss = tf.Print(loss, [loss_wh], message='Loss WH \t', summarize=1000)
-            loss = tf.Print(loss, [loss_conf], message='Loss Conf \t', summarize=1000)
-            loss = tf.Print(loss, [loss_class], message='Loss Class \t', summarize=1000)
-            loss = tf.Print(loss, [loss], message='Total Loss \t', summarize=1000)
-            loss = tf.Print(loss, [current_recall], message='Current Recall \t', summarize=1000)
-            loss = tf.Print(loss, [total_recall/seen], message='Average Recall \t', summarize=1000)
-        
+            current_recall = nb_pred_box/(nb_true_box + 1e-6)
+            total_recall = self.total_recall.assign_add(current_recall)
+
+            tf.print('Loss XY \t', loss_xy, summarize=1000)
+            tf.print('Loss WH \t', loss_wh, summarize=1000)
+            tf.print('Loss Conf \t', loss_conf, summarize=1000)
+            tf.print('Loss Class \t', loss_class, summarize=1000)
+            tf.print('Total Loss \t', loss, summarize=1000)
+            tf.print('Current Recall \t', current_recall, summarize=1000)
+            tf.print('Average Recall \t', total_recall/seen, summarize=1000)
+
         return loss
 
     def load_weights(self, weight_path):
@@ -265,6 +284,9 @@ class YOLO(object):
         self.class_scale     = class_scale
 
         self.debug = debug
+
+        self.seen.assign(0.0)
+        self.total_recall.assign(0.0)
 
         ############################################
         # Make train and validation generators
@@ -297,7 +319,7 @@ class YOLO(object):
         # Compile the model
         ############################################
 
-        optimizer = Adam(lr=learning_rate, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
+        optimizer = Adam(learning_rate=learning_rate, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
         self.model.compile(loss=self.custom_loss, optimizer=optimizer)
 
         ############################################
@@ -309,12 +331,12 @@ class YOLO(object):
                            patience=3, 
                            mode='min', 
                            verbose=1)
-        checkpoint = ModelCheckpoint(saved_weights_name, 
-                                     monitor='val_loss', 
-                                     verbose=1, 
-                                     save_best_only=True, 
-                                     mode='min', 
-                                     period=1)
+        checkpoint = ModelCheckpoint(saved_weights_name,
+                                     monitor='val_loss',
+                                     verbose=1,
+                                     save_best_only=True,
+                                     mode='min',
+                                     save_freq='epoch')
         tensorboard = TensorBoard(log_dir=os.path.expanduser('~/logs/'), 
                                   histogram_freq=0, 
                                   #write_batch_performance=True,
